@@ -1,4 +1,4 @@
-A collection of my (both technical and non-technical) notes, posts, and resources I use frequently.
+A collection of my notes, posts, and some resources I use frequently.
 
 ## Technical Notes
 - [Reproducible Unit Testing Environments](./notes/reproducable-testing.md) (2025)
