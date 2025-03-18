@@ -1,15 +1,17 @@
-# Reproducible Unit Testing Environments
+# Reproducible Testing Environments
 
 _First written: March 17, 2025_.
-_Last updated: March 17, 2025_.
+_Last updated: March 18, 2025_.
 
-This page contains some ways to increase the reproducibility of unit tests between different machines (e.g. dev machines vs build machines).
+This page contains some ways to increase the reproducibility of tests between different machines (e.g. dev machines vs build machines). 
 
-## Unit Tests in Docker and CI
+**Summary/TLDR:** Eliminate network calls to 3rd parties (including for feature flag services and observability agents) and standardize the environment variables that tests get executed with.
 
-If my team has unit tests that will eventually run in a container-oriented build pipeline, I find it's not much additional effort to wrap the docker execution of unit tests in a shell script. Then, we can add some extra configuration to increase reproducibility. As a result, developers invoking the script locally have a very high chance of matching the execution in the build pipeline, allowing developers to debug any issues quicker (as opposed to waiting for the build pipeline to run again or shelling into build machines). 
+## Tests in Docker and CI
 
-It also makes the build pipeline file (e.g. `.circleci/config.yml` for CircleCI) more concise as that pipeline's step only has to invoke the script (e.g. `command: ./scripts/run_unit_tests_docker.sh` for CircleCI) instead of listing all the separate commands inline. As the build pipeline configuration files can get quite big, I find it's easier to reason about them when some functionality is split into separate shell scripts.
+If my team has tests that will eventually run in a container-oriented build pipeline, I find it's not much additional effort to wrap the docker execution of tests in a shell script. Then, we can add some extra configuration to increase reproducibility. As a result, developers invoking the script locally have a very high chance of matching the execution in the build pipeline, allowing developers to debug any issues quicker (as opposed to waiting for the build pipeline to run again or shelling into build machines). 
+
+It also makes the build pipeline file (e.g. `.circleci/config.yml` for CircleCI) more concise as that pipeline's step only has to invoke the script (e.g. `command: ./scripts/run_tests_docker.sh` for CircleCI) instead of listing all the separate commands inline. As the build pipeline configuration files can get quite big, I find it's easier to reason about them when some functionality is split into separate shell scripts.
 
 Here is an example script with some explanations:
 
@@ -27,8 +29,8 @@ cd "$REPO_ROOT"
 # step will run quite fast on hosts which have previously built parts
 # of the same image (be sure to enable it in your build environment). 
 # The corresponding Dockerfile is shown later in this post.
-IMAGE_TAG="my-project-name-unit-tests:latest"
-docker build --target unit-tests --tag "$IMAGE_TAG" .
+IMAGE_TAG="my-project-name-tests:latest"
+docker build --target tests --tag "$IMAGE_TAG" .
 
 # Define a working directly in the container where we will mount files.
 CONTAINER_WORKDIR="/opt/document-parser"
@@ -42,7 +44,7 @@ TEST_COMMAND="\
   && poetry run coverage html -d $CONTAINER_WORKDIR/test/test-results/htmlcov
 "
 
-# Use docker to run the unit tests. Explanations of the flags/parameters are below.
+# Use docker to run the tests. Explanations of the flags/parameters are below.
 docker run \
   --rm \ 
   --network none \
@@ -57,21 +59,21 @@ docker run \
 # may be run several times in quick succession.
 
 # '--network none': Disable networking for the container. This is useful to 
-# find unintentional requests to 3rd parties which unit tests should not
+# find unintentional requests to 3rd parties which tests should not
 # make. 
 # Example 1: Triggering a code path which uses a 3rd party service to return
-# a result. The unit test should be modified to avoid making such calls
+# a result. The test should be modified to avoid making such calls
 # so that it is deterministic. This could be done with a mock implementation
 # of an interface (if using dependency injection) or mocking the library 
 # used to make network requests (e.g. pytest-httpx if using httpx as an HTTP
 # client in Python).
 # Example 2: Triggering a code path that relies on a feature flag service
-# that makes a network request to find the state of the feature flag. The unit
+# that makes a network request to find the state of the feature flag. The 
 # test should ideally be rewritten to avoid calling components that use 
 # feature flags, or use dependency-injected configuration, or mock the feature
 # flag service.
 # Example 3: Triggering a code path that records errors or metrics that make
-# a network request to a 3rd party (e.g. Sentry or Datadog). The unit test
+# a network request to a 3rd party (e.g. Sentry or Datadog). The test
 # environment should disable these 3rd party SDKs completely, making them
 # no-ops, or mocked SDKs can be injected.
 
@@ -94,9 +96,9 @@ docker run \
 
 # Lack of '--env` or `--env-file`: By omitting the loading of any .env file
 # or other environment variables, the container will only have any system
-# default variables from the base image. If unit tested components rely on
+# default variables from the base image. If tested components rely on
 # "app-level" env vars, they can be modified to accept those values as a 
-# parameter, or the specific unit tests can monkeypatch the environment
+# parameter, or the specific tests can monkeypatch the environment
 # temporarily (and reset it after the tests finish). 
 # I find this is one of the most common reasons tests vary between build 
 # pipelines and local machines: without environment variable isolation, 
@@ -107,7 +109,7 @@ docker run \
 # that might be used in end-to-end testing, but also accidentally leak into
 # unit tests (e.g. 'contexts' in CircleCI automatically inject collections 
 # of variables into the build machine hosts). 
-# If a dev's '.env' file and the build machine config drift, unit tests 
+# If a dev's '.env' file and the build machine config drift, tests 
 # might run differently, even though we only intended those variables to 
 # affect general usage of the service or end-to-end tests.
 ```
@@ -131,9 +133,9 @@ COPY pyproject.toml poetry.lock poetry.toml /opt/my-service-name/
 # not all other images that inherit from 'base' will need them.
 RUN poetry install --only main
 
-## unit-tests stage/target (inherits from base)
+## tests stage/target (inherits from base)
 ## ============================================================
-FROM base AS unit-tests
+FROM base AS tests
 # Need to install dev+test dependencies (as '--only main' was done in the 'base' stage)
 RUN poetry install
 USER document-parser
@@ -146,21 +148,21 @@ COPY ./src /opt/document-parser/src
 # Note: no copying of test code, and the test/dev dependencies were omitted in the 'base' stage
 ```
 
-Since the shell script always runs a `docker build` against the `unit-test` target, and also dynamically mounts the source code and tests, we can be quite confident about the correctness of the test execution. For example, if we upgrade our project dependencies (in this example, via changing `pyproject.toml` and its associated files), the docker layer would be invalidated, causing a rebuild of the later steps. If nothing changes, then the build would run instantly since all the layers would be the same.
+Since the shell script always runs a `docker build` against the `tests` target, and also dynamically mounts the source code and tests, we can be quite confident about the correctness of the test execution. For example, if we upgrade our project dependencies (in this example, via changing `pyproject.toml` and its associated files), the docker layer would be invalidated, causing a rebuild of the later steps. If nothing changes, then the build would run instantly since all the layers would be the same.
 
-## Unit Tests on a Local Machine (e.g. via an IDE)
+## Tests on a Local Machine (e.g. via an IDE)
 
-Running unit tests in Docker can hamper local development depending on the OS and language ecosystem. 
+Running tests in Docker can hamper local development depending on the OS and language ecosystem. 
 
-For example, getting PyCharm to run unit tests in Docker containers can be tough (including being able to select individual test cases by pressing the "Run" icon beside them in the editor gutter). It gets even trickier when attempting to attach the PyCharm debugger to a container (e.g. setting up `pydevd_pycharm` which I have found unreliable in the past).
+For example, getting PyCharm to run tests in Docker containers can be tough (including being able to select individual test cases by pressing the "Run" icon beside them in the editor gutter). It gets even trickier when attempting to attach the PyCharm debugger to a container (e.g. setting up `pydevd_pycharm` which I have found unreliable in the past).
 
 For that reason, I set up test frameworks so they can also be run directly on the host in addition to being run in containers. Then they can be easily integrated with IDE features. However, this could affect the reproducibility of the tests, which the developer might not notice until the tests are run in Docker in the build pipeline.
 
-To recapture some reproducibility of Docker-based unit test execution, I often add some root-level fixtures/hooks for some common causes of inconsistent test results.
+To recapture some reproducibility of Docker-based test execution, I often add some root-level fixtures/hooks for some common causes of inconsistent test results.
 
 **.env Files**
 
-My teams have often used `.env` files to make it easier to manage configuration of our apps via environment variables. This is useful when running the app locally, but can easily change the branching of code in unit tests.
+My teams have often used `.env` files to make it easier to manage configuration of our apps via environment variables. This is useful when running the app locally, but can easily change the branching of code in tests.
 
 If we're using something like `pydantic_settings.BaseSettings` which supports autoloading `.env` files via the `env_file` option, one option is to disable that during test execution: 
 
@@ -168,7 +170,7 @@ If we're using something like `pydantic_settings.BaseSettings` which supports au
 @pytest.fixture(autouse=True, scope="session")
 def bypass_dotenv_file():
     """
-    When running unit tests outside a container (on a developer's host), we want to prevent
+    When running tests outside a container (on a developer's host), we want to prevent
     accidental use of environment variables via the dotenv file (.env). This way the developer 
     will have a consistent experience between their host and when running the same tests in 
     Docker/CircleCI.
@@ -199,3 +201,51 @@ def remove_env_vars():
 
 Then to test individual modules that rely on environment variables, they can be inverted to use dependency injection, or additional calls to `mock.patch.dict` or `monkeypatch.setenv` can be made in the test case setup code.
 
+**Disabling Feature Flags**
+
+Accidentally coupling tests to the state of feature flags can happen when the feature flag service is used directly in a component (instead of having the state dependency injected) and some older existing cases test the same component but haven't been updated to mock/override the newly added feature flags.
+
+Ideally, tests could be run in a way that prevents the code from initialing the feature flag service in the first place. If that's not possible, I like to patch the feature flag SDK so that it fails loudly when a feature flag access has not been mocked. This can either be done by disabling the SDK's initialization logic, or monkey-patching it to fail all feature flag state requests.
+
+For example, if using the global SDK-scoped LaunchDarkly client (`ldclient.get()`) and using `variation_detail` to fetch the flag state, the following fixture could work:
+```python
+@pytest.fixture(autouse=True, scope="session")
+def disable_launchdarkly():
+    """
+    Forces all tests which trigger a feature flag lookup to mock it by
+    causing an exception to be thrown by default.
+    """
+    import ldclient
+
+    ld_client_mock = MagicMock()
+    ld_client_mock.variation_detail.side_effect = Exception(
+        "A test case is triggering a LaunchDarkly feature flag lookup via the SDK."
+        "Please ensure the feature flag is mocked, or switch it to use a dependency injected state."
+    )
+
+    with mock.patch.object(ldclient, "get") as mock_get:
+        mock_get.return_value = ld_client
+        yield
+```
+
+**Disabling Observability Libraries and Agents**
+
+Services like Sentry and NewRelic are great for observability. However, I disable them in tests since the network requests they issue and their hooking into 3rd party libraries can create noise and disruption. One downside of this is that if the SDKs are being used incorrectly or are buggy themselves, test cases won't catch that. If that's a concern, a separate integration test might be useful.
+
+Ideally, tests could be run in a way that prevents the code from initialing these SDKs in the first place. If that's not possible, then I like to patch the SDKs.
+
+At the time of writing, to disable the Sentry SDK in Python, it's enough to patch the `init` method:
+
+```python
+@pytest.fixture(autouse=True, scope="session")
+def disable_sentry():
+    """
+    Because Sentry automatically hooks into other 3rd party libraries and can send
+    network requests, it's best we prevent it from initializing because it causes noise 
+    in the test output.
+    """
+    import sentry_sdk
+    
+    with mock.patch.object(sentry_sdk, "init"):
+        yield
+```
