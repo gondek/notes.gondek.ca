@@ -1,15 +1,14 @@
 # Reproducible Testing Environments
 
-_First written: March 17, 2025_.
-_Last updated: March 18, 2025_.
+_Written: March 17, 2025._
 
 This page contains some ways to increase the reproducibility of tests between different machines (e.g. dev machines vs build machines). 
 
-**Summary/TLDR:** Eliminate network calls to 3rd parties (including for feature flag services and observability agents) and standardize the environment variables that tests get executed with.
+**Summary/TLDR:** Block unintentional network calls to 3rd parties (such as feature flag services and observability agents) and standardize the environment variables that tests get executed with.
 
 ## Tests in Docker and CI
 
-If my team has tests that will eventually run in a container-oriented build pipeline, I find it's not much additional effort to wrap the docker execution of tests in a shell script. Then, we can add some extra configuration to increase reproducibility. As a result, developers invoking the script locally have a very high chance of matching the execution in the build pipeline, allowing developers to debug any issues quicker (as opposed to waiting for the build pipeline to run again or shelling into build machines). 
+If my team has tests that will eventually run in a container-oriented build pipeline, I find it's not much additional effort to wrap Docker's execution of tests in a shell script. Then, we can add some extra configuration to increase reproducibility. As a result, developers invoking the script locally have a very high chance of matching the execution in the build pipeline, allowing developers to debug any issues quicker (as opposed to waiting for the build pipeline to run again or shelling into build machines). 
 
 It also makes the build pipeline file (e.g. `.circleci/config.yml` for CircleCI) more concise as that pipeline's step only has to invoke the script (e.g. `command: ./scripts/run_tests_docker.sh` for CircleCI) instead of listing all the separate commands inline. As the build pipeline configuration files can get quite big, I find it's easier to reason about them when some functionality is split into separate shell scripts.
 
@@ -64,7 +63,7 @@ docker run \
 # Example 1: Triggering a code path which uses a 3rd party service to return
 # a result. The test should be modified to avoid making such calls
 # so that it is deterministic. This could be done with a mock implementation
-# of an interface (if using dependency injection) or mocking the library 
+# of a service interface (if using dependency injection) or mocking the library 
 # used to make network requests (e.g. pytest-httpx if using httpx as an HTTP
 # client in Python).
 # Example 2: Triggering a code path that relies on a feature flag service
@@ -230,7 +229,7 @@ def disable_launchdarkly():
 
 **Disabling Observability Libraries and Agents**
 
-Services like Sentry and NewRelic are great for observability. However, I disable them in tests since the network requests they issue and their hooking into 3rd party libraries can create noise and disruption. One downside of this is that if the SDKs are being used incorrectly or are buggy themselves, test cases won't catch that. If that's a concern, a separate integration test might be useful.
+Services like Sentry and NewRelic are great for observability. However, I disable them in tests since the network requests they issue and their hooking into 3rd party libraries can create noise. One downside of this is that if the SDKs are being used incorrectly or are buggy themselves, test cases won't catch that. If that's a concern, a separate integration test might be useful.
 
 Ideally, tests could be run in a way that prevents the code from initialing these SDKs in the first place. If that's not possible, then I like to patch the SDKs.
 
